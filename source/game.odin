@@ -27,29 +27,81 @@ created.
 
 package game
 
+import "core:container/queue"
 import "core:fmt"
 import "core:math/linalg"
 import rl "vendor:raylib"
 
 PIXEL_WINDOW_HEIGHT :: 180
 
+GameState :: enum {
+	InProgress,
+	YouWin,
+	YouLose,
+}
+
+SceneObject :: struct {
+	name: string,
+	ID: int,
+	isActive: bool,
+}
+
+
+SceneActor :: struct {
+	using _: SceneObject,
+	Position: rl.Vector3,
+	Rotation: rl.Vector3,
+	Scale: rl.Vector3,
+}
+
+Entity :: struct {
+	actor: SceneActor,
+}
+
+Alive :: struct {
+	using _: Entity,
+	HP: int,
+	eventQueue: queue.Queue(ActionEvent),
+	attackCooldown: f64,
+	rechargeTime: f64,
+}
+
+Player :: struct {
+	using _: Alive,
+	animEnemyComponent: rl.Model,
+}
+
+Enemy :: struct {
+	using Alive,
+}
+
+Terrain :: struct {
+	using Entity,
+}
+
+ActionEvent :: enum {
+	ApplyDamage,
+	LostLife,
+}
+
+
+
 Game_Memory :: struct {
 	player_pos: rl.Vector2,
-	player_texture: rl.Texture,
+	player: Player,
 	some_number: int,
 	run: bool,
 }
 
 g: ^Game_Memory
 
-game_camera :: proc() -> rl.Camera2D {
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
+game_camera :: proc() -> rl.Camera3D {
 
 	return {
-		zoom = h/PIXEL_WINDOW_HEIGHT,
-		target = g.player_pos,
-		offset = { w/2, h/2 },
+		position = {0,1,-10.0},
+		target = {0,0,0},
+		up = {0,1,0},
+		fovy = 45.0,
 	}
 }
 
@@ -86,13 +138,16 @@ update :: proc() {
 
 draw :: proc() {
 	rl.BeginDrawing()
-	rl.ClearBackground(rl.BLACK)
-
-	rl.BeginMode2D(game_camera())
-	rl.DrawTextureEx(g.player_texture, g.player_pos, 0, 1, rl.WHITE)
+	rl.ClearBackground(rl.DARKGRAY)
+	cam := game_camera()
+	rl.BeginMode3D(cam)
+	cam.position = {60,30,60}
+	cam.target = {0,3,0}
+	rl.DrawModel(g.player.animEnemyComponent, g.player.actor.Position, g.player.actor.Scale.y, rl.WHITE)
+	// lightShader := rl.LoadShader("assets/shaders/glsl330/kn_lit.vs", "assets/shaders/glsl330/kn_lit.fs")
 	rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
 	rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
-	rl.EndMode2D()
+	rl.EndMode3D()
 
 	rl.BeginMode2D(ui_camera())
 
@@ -118,23 +173,27 @@ game_update :: proc() {
 @(export)
 game_init_window :: proc() {
 	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
-	rl.InitWindow(1280, 720, "Odin + Raylib + Hot Reload template!")
+	rl.InitWindow(1280, 720, "Queue Demo")
 	rl.SetWindowPosition(200, 200)
-	rl.SetTargetFPS(500)
+	rl.SetTargetFPS(60)
 	rl.SetExitKey(nil)
 }
 
 @(export)
 game_init :: proc() {
 	g = new(Game_Memory)
-
+	player := Player{
+		actor = { name = "player", Position= {0,-3,30.0}, Rotation={0,180.0,0}, Scale= {3.0, 3.0, 3.0},},
+		HP = 100,
+	}
+	player.animEnemyComponent = rl.LoadModel("assets/models/gltf/robot.glb")
 	g^ = Game_Memory {
 		run = true,
 		some_number = 100,
 
 		// You can put textures, sounds and music in the `assets` folder. Those
 		// files will be part any release or web build.
-		player_texture = rl.LoadTexture("assets/round_cat.png"),
+		player = player,
 	}
 
 	game_hot_reloaded(g)
