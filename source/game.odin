@@ -28,8 +28,9 @@ created.
 package game
 
 import "core:container/queue"
-import "core:fmt"
+// import "core:fmt"
 import "core:math/linalg"
+// import "core:c"
 import rl "vendor:raylib"
 
 PIXEL_WINDOW_HEIGHT :: 180
@@ -41,7 +42,7 @@ GameState :: enum {
 }
 
 SceneObject :: struct {
-	name: string,
+	name: cstring,
 	ID: int,
 	isActive: bool,
 }
@@ -66,17 +67,23 @@ Alive :: struct {
 	rechargeTime: f64,
 }
 
-Player :: struct {
-	using _: Alive,
+Model :: struct {
 	animEnemyComponent: rl.Model,
 }
 
+Player :: struct {
+	using _: Alive,
+	using _: Model,
+}
+
 Enemy :: struct {
-	using Alive,
+	using _: Alive,
+	using _: Model,
 }
 
 Terrain :: struct {
-	using Entity,
+	using _: Entity,
+	using _: Model,
 }
 
 ActionEvent :: enum {
@@ -89,6 +96,9 @@ ActionEvent :: enum {
 Game_Memory :: struct {
 	player_pos: rl.Vector2,
 	player: Player,
+	terrain: Terrain,
+	enemy: Enemy,
+	font: rl.Font,
 	some_number: int,
 	run: bool,
 }
@@ -137,28 +147,55 @@ update :: proc() {
 }
 
 draw :: proc() {
+
+	rl.GuiSetFont(g.font)
+	rl.GuiSetStyle(.PROGRESSBAR, 2, -1)
+	rl.GuiSetStyle(.DEFAULT, 16, 24)
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.DARKGRAY)
 	cam := game_camera()
 	rl.BeginMode3D(cam)
 	cam.position = {60,30,60}
 	cam.target = {0,3,0}
+	rl.DrawModel(g.terrain.animEnemyComponent, g.terrain.actor.Position, g.terrain.actor.Scale.y, rl.WHITE)
 	rl.DrawModel(g.player.animEnemyComponent, g.player.actor.Position, g.player.actor.Scale.y, rl.WHITE)
+	// rl.DrawModel(g.enemy.animEnemyComponent, g.enemy.actor.Position, g.enemy.actor.Scale.y, rl.WHITE)
 	// lightShader := rl.LoadShader("assets/shaders/glsl330/kn_lit.vs", "assets/shaders/glsl330/kn_lit.fs")
-	rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
-	rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
 	rl.EndMode3D()
 
 	rl.BeginMode2D(ui_camera())
 
-	// NOTE: `fmt.ctprintf` uses the temp allocator. The temp allocator is
-	// cleared at the end of the frame by the main application, meaning inside
-	// `main_hot_reload.odin`, `main_release.odin` or `main_web_entry.odin`.
-	rl.DrawText(fmt.ctprintf("some_number: %v\nplayer_pos: %v", g.some_number, g.player_pos), 5, 5, 8, rl.WHITE)
-
 	rl.EndMode2D()
+	draw_gui(g.player)
 
 	rl.EndDrawing()
+}
+
+draw_gui :: proc(p: Player) {
+	rate := f32(p.rechargeTime / p.attackCooldown)
+	if (rate > 1) do rate = 1
+	if (rate < 1 ) {
+		rl.GuiSetStyle(.PROGRESSBAR, 2, 16711935)
+	} else {
+		rl.GuiSetStyle(.PROGRESSBAR, 2, 16711935)
+	}
+	rl.GuiProgressBar(
+		rl.Rectangle{100,130,400,15},
+		p.actor.name,
+		rate < 1 ? cstring("Charging") : cstring("Ready"),
+		&rate,
+		0,
+		1,
+	)
+	health := f32(p.HP / 100.0)
+	rl.GuiProgressBar(
+		rl.Rectangle{100,80,400,30},
+		"0",
+		"100",
+		&health,
+		0,
+		1,
+	)
 }
 
 @(export)
@@ -177,16 +214,36 @@ game_init_window :: proc() {
 	rl.SetWindowPosition(200, 200)
 	rl.SetTargetFPS(60)
 	rl.SetExitKey(nil)
+
 }
 
 @(export)
 game_init :: proc() {
 	g = new(Game_Memory)
+
+	g.font = rl.LoadFontEx("assets/fonts/sparky.ttf", 32, nil, 0)
 	player := Player{
 		actor = { name = "player", Position= {0,-3,30.0}, Rotation={0,180.0,0}, Scale= {3.0, 3.0, 3.0},},
 		HP = 100,
+		animEnemyComponent = rl.LoadModel("assets/models/gltf/robot.glb"),
 	}
-	player.animEnemyComponent = rl.LoadModel("assets/models/gltf/robot.glb")
+	// animationCount : c.int = 6
+	// animations := rl.LoadModelAnimations("assets/models/gltf/robot.glb", &animationCount)
+
+	terrain := Terrain {
+		actor = { name = "terrain", Position= {0,-5, 0.0}, Rotation={0,0,0}, Scale= {20, 1, 20},},
+		animEnemyComponent = rl.LoadModel("assets/models/obj/bridge.obj"),
+	}
+	image := rl.LoadImage("assets/models/obj/bridge_diffuse.png")
+	tex := rl.LoadTextureFromImage(image)
+	rl.UnloadImage(image)
+	terrain.animEnemyComponent.materials[0].maps[0].texture = tex
+
+	enemy := Enemy {
+		actor = {name = "Enemery", Scale= {3.0, 5.0, 3.0}, Position = {0, 0.0, 0.0}},
+		animEnemyComponent = rl.LoadModel("assets/models/gltf/greenman.glb"),
+	}
+
 	g^ = Game_Memory {
 		run = true,
 		some_number = 100,
@@ -194,6 +251,8 @@ game_init :: proc() {
 		// You can put textures, sounds and music in the `assets` folder. Those
 		// files will be part any release or web build.
 		player = player,
+		terrain = terrain,
+		enemy = enemy,
 	}
 
 	game_hot_reloaded(g)
@@ -213,6 +272,7 @@ game_should_run :: proc() -> bool {
 
 @(export)
 game_shutdown :: proc() {
+	rl.UnloadFont(g.font)
 	free(g)
 }
 
